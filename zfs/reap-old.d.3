@@ -1,0 +1,79 @@
+#!/usr/sbin/dtrace -s
+
+#pragma D option quiet
+
+/*
+ * Derived from Matt Ahrens' reap-old. script
+*/
+
+kmem_depot_ws_reap:entry
+{
+	self->ts[probefunc] = timestamp;
+	self->cache = args[0];
+	self->slabs_destroyed=0;
+	printf("%s: %s full reaplimit=%u min=%u total=%u; empty reaplimit=%u min=%u total=%u\n",
+	    probefunc,
+	    self->cache->cache_name,
+	    self->cache->cache_full.ml_reaplimit,
+	    self->cache->cache_full.ml_min,
+	    self->cache->cache_full.ml_total,
+	    self->cache->cache_empty.ml_reaplimit,
+	    self->cache->cache_empty.ml_min,
+	    self->cache->cache_empty.ml_total);
+}
+
+kmem_slab_destroy:entry
+/self->cache/
+{
+	self->slabs_destroyed++;
+	@[stack()] = count();
+}
+
+kmem_depot_ws_reap:return
+/(timestamp - self->ts[probefunc])/1000/1000 > 2/
+{
+	printf("spent %ums reaping %s, freed %uMB, (destroyed %u slabs of %uKB each)\n",
+	    (timestamp - self->ts[probefunc])/1000/1000,
+	    self->cache->cache_name,
+	    self->slabs_destroyed * self->cache->cache_slabsize / 1024 / 1024,
+	    self->slabs_destroyed,
+	    self->cache->cache_slabsize / 1024);
+}
+
+arc_shrink:entry
+{
+	printf("shrinking ARC\n");
+}
+
+arc_kmem_reap_now:entry,
+arc_shrink:entry,
+vmem_qcache_reap:entry
+{
+	self->ts[probefunc] = timestamp;
+}
+
+arc_kmem_reap_now:return,
+arc_shrink:return,
+vmem_qcache_reap:return
+{
+	printf("  %Y  spent %ums in %s\n\n",
+	    walltimestamp,
+	    (timestamp - self->ts[probefunc])/1000/1000,
+	    probefunc);
+}
+
+/* Add evict tracing */
+arc_do_user_evicts:entry
+{ self->ts[probefunc] = timestamp; }
+
+arc_do_user_evicts:return
+/(timestamp - self->ts[probefunc])/1000/1000 > 10/
+{
+	printf("  %Y  spent %ums in %s\n\n",
+	    walltimestamp,
+	    (timestamp - self->ts[probefunc])/1000/1000,
+	    probefunc);
+}
+
+arc_do_user_evicts:return
+{ self->ts[probefunc] = NULL; }

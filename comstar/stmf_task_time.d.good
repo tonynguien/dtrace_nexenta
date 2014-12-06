@@ -1,0 +1,95 @@
+#!/usr/sbin/dtrace -s
+
+/*
+ * TODO: inline TF_READ_DATA = 64
+ * 	 inline TF_WRITE_DATA = 32
+ *
+ * #define	TF_READ_DATA		0x40
+ * #define	TF_WRITE_DATA		0x20
+ */
+
+/*
+ * read task completed
+ */
+sdt:stmf:stmf_task_free:stmf-task-end
+/((scsi_task_t *) arg0)->task_flags & 0x40/
+{
+        this->task = (scsi_task_t *) arg0;
+        this->lu = (stmf_lu_t *) this->task->task_lu;
+        this->itask = (stmf_i_scsi_task_t *) this->task->task_stmf_private;
+        this->lport = this->task->task_lport;
+
+	/* @lport_r[stringof(this->lu->lu_alias),
+	    stringof(this->lport->lport_alias)] = count(); */
+	@lport_r[stringof(this->lport->lport_alias)] = count();
+
+        @read_task = quantize(arg1/1000);
+        @read_qtime = quantize(this->itask->itask_waitq_time/1000);
+        @read_lu_xfer = quantize(this->itask->itask_lu_read_time/1000);
+        @read_lport_xfer = quantize(this->itask->itask_lport_read_time/1000);
+}
+
+/*
+ * write task completed
+ */
+sdt:stmf:stmf_task_free:stmf-task-end
+/((scsi_task_t *) arg0)->task_flags & 0x20/
+{
+        this->task = (scsi_task_t *) arg0;
+        this->lu = (stmf_lu_t *) this->task->task_lu;
+        this->itask = (stmf_i_scsi_task_t *) this->task->task_stmf_private;
+        this->lport = this->task->task_lport;
+
+	/*@lport_w[stringof(this->lu->lu_alias),
+	    stringof(this->lport->lport_alias)] = count(); */
+	@lport_w[stringof(this->lport->lport_alias)] = count();
+
+	/*
+        @write_task = quantize(arg1/1000);
+        @write_qtime = quantize(this->itask->itask_waitq_time/1000);
+        @write_lu_xfer = quantize(this->itask->itask_lu_write_time/1000);
+        @write_lport_xfer = quantize(this->itask->itask_lport_write_time/1000);
+	*/
+
+        @write_task = quantize(arg1);
+        @write_qtime = quantize(this->itask->itask_waitq_time);
+        @write_lu_xfer = quantize(this->itask->itask_lu_write_time);
+        @write_lport_xfer = quantize(this->itask->itask_lport_write_time);
+}
+
+profile:::tick-5sec
+{
+	printf("\n\t\t=== Read summary ===\n");
+	printf("=== reads/sec ===");
+	normalize(@lport_r, 5);
+	printa(@lport_r); trunc(@lport_r, 0); 
+
+	printf("\n=== Read task latencies (us) ===");
+	printa(@read_task); trunc(@read_task, 0); 
+
+	printf("\n=== read waitq time (us) ===");
+	printa(@read_qtime); trunc(@read_qtime, 0); 
+
+	printf("\n=== read lu_xfer time (us) ===");
+	printa(@read_lu_xfer); trunc(@read_lu_xfer, 0); 
+
+	printf("\n=== read lport_xfer time (us) ===");
+	printa(@read_lport_xfer); trunc(@read_lport_xfer, 0); 
+
+	printf("\n\t\t=== Write summary ===\n");
+	printf("=== writes/sec ===");
+	normalize(@lport_w, 5);
+	printa(@lport_w); trunc(@lport_w, 0); 
+
+	printf("\n=== Write task latencies (us) ===");
+	printa(@write_task); trunc(@write_task, 0); 
+
+	printf("\n=== write waitq time (us) ===");
+	printa(@write_qtime); trunc(@write_qtime, 0); 
+
+	printf("\n=== write lu_xfer time (us) ===");
+	printa(@write_lu_xfer); trunc(@write_lu_xfer, 0); 
+
+	printf("\n=== write lport_xfer time (us) ===");
+	printa(@write_lport_xfer); trunc(@write_lport_xfer, 0); 
+}
